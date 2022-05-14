@@ -1625,6 +1625,19 @@ static int wlan_hdd_pld_suspend(struct device *dev,
 {
 	struct osif_psoc_sync *psoc_sync;
 	int errno;
+	struct hdd_context *hdd_ctx;
+
+	hdd_ctx = cds_get_context(QDF_MODULE_ID_HDD);
+
+	errno = wlan_hdd_validate_context(hdd_ctx);
+	if (errno)
+		return errno;
+	/*
+	 * Flush the idle shutdown before ops start.This is done here to avoid
+	 * the deadlock as idle shutdown waits for the dsc ops
+	 * to complete.
+	 */
+	hdd_psoc_idle_timer_stop(hdd_ctx);
 
 	errno = osif_psoc_sync_op_start(dev, &psoc_sync);
 	if (errno)
