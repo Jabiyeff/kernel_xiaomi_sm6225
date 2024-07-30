@@ -41,7 +41,7 @@
 /******************************************************************************
 * Private constant and macro definitions using #define
 *****************************************************************************/
-#define KEY_GESTURE_U                           KEY_WAKEUP
+#define KEY_GESTURE_DOUBLECLICK                 KEY_WAKEUP
 #define KEY_GESTURE_UP                          KEY_UP
 #define KEY_GESTURE_DOWN                        KEY_DOWN
 #define KEY_GESTURE_LEFT                        KEY_LEFT
@@ -55,7 +55,7 @@
 #define KEY_GESTURE_V                           KEY_V
 #define KEY_GESTURE_C                           KEY_C
 #define KEY_GESTURE_Z                           KEY_Z
-#define KEY_GESTURE_AOD                         KEY_GOTO
+#define KEY_GESTURE_SINGLECLICK                 KEY_GOTO
 
 #define GESTURE_LEFT                            0x20
 #define GESTURE_RIGHT                           0x21
@@ -71,7 +71,9 @@
 #define GESTURE_V                               0x54
 #define GESTURE_Z                               0x41
 #define GESTURE_C                               0x34
-#define GESTURE_AOD                             0x25
+#define GESTURE_SINGLECLICK                     0x25
+
+#define nt_info(fmt, ...) printk(KERN_INFO "NetErnels: " fmt, ##__VA_ARGS__)
 
 /*****************************************************************************
 * Private enumerations, structures and unions using typedef
@@ -101,6 +103,8 @@ static struct fts_gesture_st fts_gesture_data;
 /*****************************************************************************
 * Global variable or extern global variabls/functions
 *****************************************************************************/
+extern bool is_dt2w_sensor;
+extern bool is_st2w_sensor;
 
 /*****************************************************************************
 * Static function prototypes
@@ -204,6 +208,21 @@ static ssize_t fts_gesture_buf_store(
     return -EPERM;
 }
 
+static inline ssize_t double_tap_pressed_get(struct device *device,
+                               struct device_attribute *attribute,
+                               char *buffer)
+{
+       struct fts_ts_data *ts = dev_get_drvdata(device);
+       return scnprintf(buffer, PAGE_SIZE, "%i\n", ts->double_tap_pressed);
+}
+
+static inline ssize_t single_tap_pressed_get(struct device *device,
+                               struct device_attribute *attribute,
+                               char *buffer)
+{
+       struct fts_ts_data *ts = dev_get_drvdata(device);
+       return scnprintf(buffer, PAGE_SIZE, "%i\n", ts->single_tap_pressed);
+}
 
 /* sysfs gesture node
  *   read example: cat  fts_gesture_mode       ---read gesture mode
@@ -218,9 +237,24 @@ static DEVICE_ATTR(fts_gesture_mode, S_IRUGO | S_IWUSR, fts_gesture_show,
 static DEVICE_ATTR(fts_gesture_buf, S_IRUGO | S_IWUSR,
                    fts_gesture_buf_show, fts_gesture_buf_store);
 
+/* sysfs double tap pressed node
+ *   read example: cat double_tap_pressed        --- read double tap pressed state
+ */
+static DEVICE_ATTR(double_tap_pressed, S_IRUGO,
+                   double_tap_pressed_get, NULL);
+
+/* sysfs single tap pressed node
+ *   read example: cat single_tap_pressed        --- read single tap pressed state
+ */
+static DEVICE_ATTR(single_tap_pressed, S_IRUGO,
+                   single_tap_pressed_get, NULL);
+
+
 static struct attribute *fts_gesture_mode_attrs[] = {
     &dev_attr_fts_gesture_mode.attr,
     &dev_attr_fts_gesture_buf.attr,
+    &dev_attr_double_tap_pressed.attr,
+    &dev_attr_single_tap_pressed.attr,
     NULL,
 };
 
@@ -246,6 +280,16 @@ static void fts_gesture_report(struct input_dev *input_dev, int gesture_id)
 {
     int gesture;
 
+    if (is_dt2w_sensor) {
+        fts_data->double_tap_pressed = (gesture_id == GESTURE_DOUBLECLICK) ? 1 : 0;
+        sysfs_notify(&fts_data->client->dev.kobj, NULL, "double_tap_pressed");
+    }
+
+    if (is_st2w_sensor) {
+      fts_data->single_tap_pressed = (gesture_id == GESTURE_SINGLECLICK) ? 1 : 0;
+      sysfs_notify(&fts_data->client->dev.kobj, NULL, "single_tap_pressed");
+    }
+
     FTS_INFO("gesture_id:0x%x", gesture_id);
     switch (gesture_id) {
     case GESTURE_LEFT:
@@ -257,11 +301,12 @@ static void fts_gesture_report(struct input_dev *input_dev, int gesture_id)
     case GESTURE_UP:
         gesture = KEY_GESTURE_UP;
         break;
+    case GESTURE_DOUBLECLICK:
+        if (!is_dt2w_sensor)
+            gesture = KEY_GESTURE_DOUBLECLICK;
+        break;
     case GESTURE_DOWN:
         gesture = KEY_GESTURE_DOWN;
-        break;
-    case GESTURE_DOUBLECLICK:
-        gesture = KEY_GESTURE_U;
         break;
     case GESTURE_O:
         gesture = KEY_GESTURE_O;
@@ -290,27 +335,22 @@ static void fts_gesture_report(struct input_dev *input_dev, int gesture_id)
     case GESTURE_C:
         gesture = KEY_GESTURE_C;
         break;
-    case GESTURE_AOD:
-        gesture = KEY_GESTURE_AOD;
+    case GESTURE_SINGLECLICK:
+        if (!is_st2w_sensor)
+	  gesture = KEY_GESTURE_SINGLECLICK;
         break;
     default:
         gesture = -1;
         break;
     }
     /* report event key */
-    if ((gesture == KEY_GESTURE_AOD) && fts_data->aod_changed ){
+    if (gesture != 1) {
         FTS_INFO("Gesture Code=%d", gesture);
         input_report_key(input_dev, gesture, 1);
         input_sync(input_dev);
         input_report_key(input_dev, gesture, 0);
         input_sync(input_dev);
-	} else if ((gesture == KEY_GESTURE_U) && fts_data->gesture_mode) {
-        FTS_INFO("Gesture Code=%d", gesture);
-        input_report_key(input_dev, gesture, 1);
-        input_sync(input_dev);
-        input_report_key(input_dev, gesture, 0);
-        input_sync(input_dev);
-	}
+    }
 }
 
 /*****************************************************************************
@@ -337,7 +377,7 @@ int fts_gesture_readdata(struct fts_ts_data *ts_data, u8 *data)
     struct input_dev *input_dev = ts_data->input_dev;
     struct fts_gesture_st *gesture = &fts_gesture_data;
 
-    if (!ts_data->suspended ||(!ts_data->gesture_mode && !ts_data->aod_changed)) {
+    if (!ts_data->suspended) {
         return 1;
     }
 
@@ -479,10 +519,16 @@ int fts_gesture_init(struct fts_ts_data *ts_data)
 
 	input_dev->event = fts_gesture_switch;
 
-	input_set_capability(input_dev, EV_KEY, KEY_GOTO);
+    if (!is_st2w_sensor) {
+        nt_info("Legacy ST2W detected! Setting capability for it...");
+        input_set_capability(input_dev, EV_KEY, KEY_GOTO);
+    }
 	input_set_capability(input_dev, EV_KEY, KEY_SLEEP);
     input_set_capability(input_dev, EV_KEY, KEY_POWER);
-    input_set_capability(input_dev, EV_KEY, KEY_GESTURE_U);
+    if (!is_dt2w_sensor) {
+        nt_info("Legacy DT2W detected! Setting capability for it...");
+        input_set_capability(input_dev, EV_KEY, KEY_GESTURE_DOUBLECLICK);
+    }
     input_set_capability(input_dev, EV_KEY, KEY_GESTURE_UP);
     input_set_capability(input_dev, EV_KEY, KEY_GESTURE_DOWN);
     input_set_capability(input_dev, EV_KEY, KEY_GESTURE_LEFT);
@@ -497,13 +543,19 @@ int fts_gesture_init(struct fts_ts_data *ts_data)
     input_set_capability(input_dev, EV_KEY, KEY_GESTURE_Z);
     input_set_capability(input_dev, EV_KEY, KEY_GESTURE_C);
 
-	__set_bit(KEY_GOTO, input_dev->keybit);
+    if (!is_st2w_sensor) {
+      nt_info("Legacy ST2W detected! Setting key bit for it...");
+      __set_bit(KEY_GOTO, input_dev->keybit);
+    }
 	__set_bit(KEY_SLEEP, input_dev->keybit);
     __set_bit(KEY_GESTURE_RIGHT, input_dev->keybit);
     __set_bit(KEY_GESTURE_LEFT, input_dev->keybit);
     __set_bit(KEY_GESTURE_UP, input_dev->keybit);
     __set_bit(KEY_GESTURE_DOWN, input_dev->keybit);
-    __set_bit(KEY_GESTURE_U, input_dev->keybit);
+    if (!is_dt2w_sensor) {
+        nt_info("Legacy DT2W detected! Setting key bit for it...");
+        __set_bit(KEY_GESTURE_DOUBLECLICK, input_dev->keybit);
+    }
     __set_bit(KEY_GESTURE_O, input_dev->keybit);
     __set_bit(KEY_GESTURE_E, input_dev->keybit);
     __set_bit(KEY_GESTURE_M, input_dev->keybit);
