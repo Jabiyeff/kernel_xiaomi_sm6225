@@ -13,7 +13,7 @@ HEADER_INSTALL_DIR := kernel/msm-$(TARGET_KERNEL_VERSION)/scripts
 BUILD_ROOT_RELATIVE := ../../../../../../../
 
 include $(CLEAR_VARS)
-LOCAL_MODULE                  := audio_kernel_headers
+LOCAL_MODULE                  := audio_kernel_headers_old
 LOCAL_ADDITIONAL_DEPENDENCIES := $(TARGET_PREBUILT_INT_KERNEL)
 LOCAL_ADDITIONAL_DEPENDENCIES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr
 
