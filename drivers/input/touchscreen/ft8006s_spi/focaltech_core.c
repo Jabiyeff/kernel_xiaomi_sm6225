@@ -1992,7 +1992,21 @@ static int __init fts_ts_init(void)
 		FTS_ERROR("saved_command_line ERROR!");
 		return -ENOMEM;
 	} else {
-		if (strnstr(saved_command_line, "c3q_43_03_0b", 2048) != NULL) {
+		bool panel_supported = false;
+		const char *supported_panels[] = {
+			"c3q_43_03_0b",
+			"c3q_45_02_0c"  /* Added support for aftermarket Focaltech panels */
+		};
+		int i;
+
+		for (i = 0; i < ARRAY_SIZE(supported_panels); i++) {
+			if (strnstr(saved_command_line, supported_panels[i], 2048) != NULL) {
+				panel_supported = true;
+				break;
+			}
+		}
+
+		if (panel_supported) {
 			FTS_INFO("TP info: [Vendor]xinli [IC]ft8006s");
 		} else {
 			FTS_ERROR("Unknown Touch");
